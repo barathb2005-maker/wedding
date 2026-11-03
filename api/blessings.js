@@ -1,50 +1,72 @@
-const crypto = require('crypto');
-const { redis, listAll } = require('./_store');
-
-const ATTEND = ['yes', 'maybe', 'no'];
-const clean = (v, n) => String(v == null ? '' : v).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '').trim().slice(0, n);
-
 module.exports = async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   try {
+    const supabaseUrl = (process.env.SUPABASE_URL || '').trim().replace(/\/$/, '');
+    const supabaseKey = (process.env.SUPABASE_ANON_KEY || '').trim();
+
+    if (!supabaseUrl.startsWith('http') || !supabaseKey) {
+      return res.status(500).json({ error: 'Missing Supabase credentials' });
+    }
+
+    const headers = {
+      'apikey': supabaseKey,
+      'Authorization': `Bearer ${supabaseKey}`,
+      'Content-Type': 'application/json',
+      'Prefer': 'return=representation'
+    };
+
     if (req.method === 'GET') {
-      if (process.env.HIDE_WALL === 'true') return res.status(200).json({ items: [] });
-      const items = (await listAll()).map(({ name, relation, attend, message, at }) => ({ name, relation, attend, message, at }));
+      const r = await fetch(`${supabaseUrl}/rest/v1/blessings?select=*&order=id.desc`, { headers });
+      if (!r.ok) throw new Error(await r.text());
+      const rows = await r.json();
+      const items = rows.map(d => ({
+        id: d.id,
+        name: d.name || 'A friend',
+        relation: d.relation || '',
+        attend: d.attend || d.attendance || '',
+        guests: d.guests || '',
+        message: d.message || '',
+        at: d.at || d.created_at || new Date().toISOString()
+      }));
       return res.status(200).json({ items });
     }
 
     if (req.method === 'POST') {
-      const b = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
-      if (b.website) return res.status(200).json({ ok: true }); // honeypot: pretend success to bots
-
-      const name = clean(b.name, 60);
-      const message = clean(b.message, 1000);
-      if (!name) return res.status(400).json({ error: 'Name is required' });
-
-      const ip = String(req.headers['x-forwarded-for'] || 'unknown').split(',')[0].trim();
-      const key = 'rl:' + crypto.createHash('sha1').update(ip).digest('hex').slice(0, 16);
-      const n = await redis(['INCR', key]);
-      if (n === 1) await redis(['EXPIRE', key, '3600']);
-      if (n > 10) return res.status(429).json({ error: 'Too many messages' });
-
-      if ((await redis(['HLEN', 'blessings'])) >= 5000) return res.status(507).json({ error: 'Memory book is full' });
-
-      const entry = {
-        name,
-        relation: clean(b.relation, 60),
-        attend: ATTEND.includes(b.attend) ? b.attend : 'yes',
-        guests: Math.min(Math.max(parseInt(b.guests, 10) || 1, 1), 5),
-        message,
-        at: new Date().toISOString(),
+      const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
+      const payload = {
+        name: String(body.name || 'A friend').slice(0, 120),
+        relation: body.relation ? String(body.relation).slice(0, 120) : null,
+        attend: body.attend || body.attendance || null,
+        attendance: body.attendance || body.attend || null,
+        guests: body.guests ? String(body.guests) : null,
+        message: String(body.message || '').slice(0, 2000)
       };
-      const id = Date.now().toString(36) + crypto.randomBytes(4).toString('hex');
-      await redis(['HSET', 'blessings', id, JSON.stringify(entry)]);
-      return res.status(200).json({ ok: true });
+
+      const r = await fetch(`${supabaseUrl}/rest/v1/blessings`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload)
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const saved = await r.json();
+      const d = saved[0] || payload;
+      return res.status(200).json({
+        ok: true,
+        item: {
+          id: d.id,
+          name: d.name,
+          relation: d.relation || '',
+          attend: d.attend || d.attendance || '',
+          guests: d.guests || '',
+          message: d.message || '',
+          at: d.at || d.created_at || new Date().toISOString()
+        }
+      });
     }
 
     res.setHeader('Allow', 'GET, POST');
     return res.status(405).json({ error: 'Method not allowed' });
   } catch (e) {
-    return res.status(500).json({ error: 'Server error' });
+    return res.status(500).json({ error: e.message || 'Server error' });
   }
 };
