@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Memory Book Admin</title>
+<style>
+:root{--maroon:#4A0B19;--crimson:#B3203A;--gold:#C29A4B;--ivory:#FBF4EE;--ink:#2B1519;--soft:#6B4A4F;color-scheme:light}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ivory);color:var(--ink);font:16px/1.6 "Helvetica Neue",Arial,sans-serif;padding:24px max(16px,env(safe-area-inset-left,0px))}
+.wrap{max-width:860px;margin:0 auto}
+h1{font:400 2rem Georgia,serif;color:var(--maroon);margin:0 0 .3rem}
+p.s{color:var(--soft);margin:0 0 1.4rem}
+input{font:inherit;padding:.7rem .8rem;border:1px solid #D9BFB3;background:#fff;min-width:0;width:100%;max-width:320px}
+button{font:600 .78rem "Helvetica Neue",Arial,sans-serif;letter-spacing:.16em;text-transform:uppercase;padding:.75rem 1.2rem;border:1px solid var(--maroon);background:var(--maroon);color:#fff;cursor:pointer}
+button.o{background:transparent;color:var(--maroon)}
+.row{display:flex;flex-wrap:wrap;gap:.7rem;align-items:center;margin-bottom:1.2rem}
+#msg{color:var(--crimson);min-height:1.5em}
+.card{background:#fff;border:1px solid #E7CFC4;padding:16px 18px;margin-bottom:12px;position:relative}
+.card b{font:400 1.25rem Georgia,serif;color:var(--crimson);display:block}
+.card small{color:var(--soft);letter-spacing:.06em;display:block;margin-bottom:.5rem}
+.card p{margin:0;white-space:pre-line;overflow-wrap:anywhere}
+.card button{position:absolute;top:10px;right:10px;padding:.3rem .6rem;font-size:.62rem}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Memory Book</h1>
+  <p class="s">Bhavya &amp; Krishnathejes · blessings from guests</p>
+
+  <form id="login" class="row">
+    <label for="pw" style="display:none">Admin password</label>
+    <input id="pw" type="password" placeholder="Admin password" autocomplete="current-password" required>
+    <button type="submit">Open</button>
+  </form>
+  <div id="msg" role="status"></div>
+
+  <div id="panel" hidden>
+    <div class="row">
+      <button type="button" id="dlx">Download Excel</button>
+      <button type="button" id="dlw" class="o">Download Word</button>
+      <button type="button" id="ref" class="o">Refresh</button>
+      <span id="count" style="color:var(--soft)"></span>
+    </div>
+    <div id="list"></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+(function(){
+  var pw='',items=[];
+  var ATT={yes:'Attending',maybe:'Will try to attend',no:'Sending blessings'};
+  var msg=document.getElementById('msg');
+  function fmt(iso){try{return new Date(iso).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'})}catch(e){return ''}}
+  function api(method,url){return fetch(url,{method:method,headers:{'x-admin-password':pw},cache:'no-store'}).then(function(r){
+    if(r.status===401)throw new Error('That password is not right.');
+    if(!r.ok)throw new Error('Something went wrong. Check that storage is connected.');
+    return r.json()})}
+  function render(){
+    var list=document.getElementById('list');list.textContent='';
+    items.forEach(function(d){
+      var c=document.createElement('div');c.className='card';
+      var n=document.createElement('b');n.textContent=d.name||'A friend';c.appendChild(n);
+      var s=document.createElement('small');s.textContent=[d.relation,ATT[d.attend],d.guests?d.guests+(d.guests>1?' guests':' guest'):'',fmt(d.at)].filter(Boolean).join(' · ');c.appendChild(s);
+      if(d.message){var p=document.createElement('p');p.textContent=d.message;c.appendChild(p)}
+      var rm=document.createElement('button');rm.type='button';rm.className='o';rm.textContent='Remove';
+      rm.onclick=function(){
+        if(rm.textContent==='Remove'){rm.textContent='Sure?';setTimeout(function(){rm.textContent='Remove'},3000);return}
+        api('DELETE','/api/admin?id='+encodeURIComponent(d.id)).then(load).catch(function(e){msg.textContent=e.message});
+      };
+      c.appendChild(rm);list.appendChild(c);
+    });
+    document.getElementById('count').textContent=items.length+(items.length===1?' message':' messages');
+  }
+  function load(){return api('GET','/api/admin').then(function(j){items=j.items||[];msg.textContent='';document.getElementById('panel').hidden=false;render()}).catch(function(e){msg.textContent=e.message})}
+  document.getElementById('login').addEventListener('submit',function(e){e.preventDefault();pw=document.getElementById('pw').value;load()});
+  document.getElementById('ref').onclick=load;
+
+  function save(name,data,type){
+    var blob=new Blob([data],{type:type});var a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();
+    setTimeout(function(){URL.revokeObjectURL(a.href);a.remove()},1000);
+  }
+  document.getElementById('dlx').onclick=function(){
+    var aoa=[['Name','Relationship','Attending','Guests','Message','Date']].concat(items.map(function(d){return [d.name||'',d.relation||'',ATT[d.attend]||'',d.guests||'',d.message||'',fmt(d.at)]}));
+    var ws=XLSX.utils.aoa_to_sheet(aoa);ws['!cols']=[{wch:24},{wch:24},{wch:20},{wch:8},{wch:70},{wch:14}];
+    var wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Blessings');
+    save('Bhavya-Krishnathejes-Blessings.xlsx',XLSX.write(wb,{bookType:'xlsx',type:'array'}),'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  };
+  function x(t){return String(t).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+  function para(t,o){o=o||{};var rp='<w:rPr>'+(o.b?'<w:b/>':'')+(o.i?'<w:i/>':'')+(o.c?'<w:color w:val="'+o.c+'"/>':'')+'<w:sz w:val="'+(o.sz||22)+'"/></w:rPr>';
+    return '<w:p><w:pPr><w:spacing w:after="'+(o.after==null?80:o.after)+'"/>'+(o.center?'<w:jc w:val="center"/>':'')+'</w:pPr><w:r>'+rp+'<w:t xml:space="preserve">'+x(t)+'</w:t></w:r></w:p>'}
+  document.getElementById('dlw').onclick=function(){
+    var body=para('Bhavya & Krishnathejes',{b:1,sz:48,c:'4A0B19',center:1,after:60})+para('Memory book of blessings · 20 December 2026',{i:1,sz:24,c:'8A6A2A',center:1,after:360});
+    items.slice().reverse().forEach(function(d){
+      body+=para(d.name||'A friend',{b:1,sz:28,c:'B3203A',after:20});
+      var meta=[d.relation,ATT[d.attend],fmt(d.at)].filter(Boolean).join(' · ');if(meta)body+=para(meta,{i:1,sz:18,c:'6B4A4F',after:80});
+      String(d.message||'').split(/\r?\n/).forEach(function(l){if(l.trim())body+=para(l,{after:60})});
+      body+=para('',{after:240});
+    });
+    var z=new JSZip();
+    z.file('[Content_Types].xml','<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>');
+    z.file('_rels/.rels','<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>');
+    z.file('word/document.xml','<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'+body+'<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>');
+    z.generateAsync({type:'arraybuffer'}).then(function(buf){save('Bhavya-Krishnathejes-Blessings.docx',buf,'application/vnd.openxmlformats-officedocument.wordprocessingml.document')});
+  };
+})();
+</script>
+</body>
+</html>
