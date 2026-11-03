@@ -1,0 +1,6 @@
+{
+  "headers": [
+    { "source": "/admin.html", "headers": [{ "key": "X-Robots-Tag", "value": "noindex" }] }
+  ],
+  "rewrites": [{ "source": "/admin", "destination": "/admin.html" }]
+}
